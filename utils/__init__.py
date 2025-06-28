@@ -5,6 +5,6 @@ This package contains utility functions for manifold traversal:
 - utils_TISVD: Truncated Incremental SVD implementations
 """
 
-from .utils_TISVD import TISVD_gw, TISVD
+from .tisvd import TISVD_gw, TISVD
 
 __all__ = ['TISVD_gw', 'TISVD'] 
