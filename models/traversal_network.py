@@ -1,7 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-from .landmark import Landmark
+from models.landmark import Landmark
+
 
 class TraversalNetwork:
     """
@@ -73,14 +74,16 @@ class TraversalNetwork:
             return
 
         landmarks_array = self.get_landmark_positions()
+        point_counts = [landmark.point_count for landmark in self.landmarks]
 
         if landmarks_array.shape[0] == 2:
             # 2D visualization
             plt.figure(figsize=(10, 8))
 
-            # landmarks
-            plt.scatter(landmarks_array[0, :], landmarks_array[1, :],
-                        c='red', s=100, alpha=0.7, label='Landmarks')
+            # landmarks colored by point count
+            scatter = plt.scatter(landmarks_array[0, :], landmarks_array[1, :],
+                                  c=point_counts, cmap='viridis', s=100, alpha=0.7)
+            plt.colorbar(scatter, label='Points per Landmark')
 
             # edges if requested
             if show_edges:
@@ -96,58 +99,75 @@ class TraversalNetwork:
             plt.title(f'Network Visualization ({self.num_landmarks} landmarks)')
             plt.xlabel('X')
             plt.ylabel('Y')
-            plt.legend()
             plt.grid(True, alpha=0.3)
             plt.axis('equal')
             plt.show()
 
-        elif landmarks_array.shape[0] == 3:
-            # 3D visualization
-            import plotly.graph_objects as go
+        elif landmarks_array.shape[0] >= 3:
+            # 3D visualization (use first 3 dimensions for high-dimensional data)
+            fig = plt.figure(figsize=(12, 5))
 
-            fig = go.Figure()
+            # 3D network structure
+            ax1 = fig.add_subplot(121, projection='3d')
 
-            # landmarks
-            fig.add_trace(go.Scatter3d(
-                x=landmarks_array[0, :],
-                y=landmarks_array[1, :],
-                z=landmarks_array[2, :],
-                mode='markers',
-                marker=dict(size=8, color='red', opacity=0.7, showscale=False),
-                name='Landmarks'
-            ))
+            # plot landmarks colored by point count
+            scatter = ax1.scatter(landmarks_array[0, :], landmarks_array[1, :], landmarks_array[2, :],
+                                  c=point_counts, cmap='viridis', s=80, alpha=0.8)
+            plt.colorbar(scatter, ax=ax1, label='Points per Landmark')
 
-            # edges if requested
             if show_edges:
+                # draw first-order edges (blue)
                 for i, landmark in enumerate(self.landmarks):
                     for edge in landmark.first_order_edges:
                         if edge.target is not landmark:  # skip self-edges
-                            # find target landmark index for plotting
                             target_idx = self.landmarks.index(edge.target)
-                            fig.add_trace(go.Scatter3d(
-                                x=[landmarks_array[0, i], landmarks_array[0, target_idx]],
-                                y=[landmarks_array[1, i], landmarks_array[1, target_idx]],
-                                z=[landmarks_array[2, i], landmarks_array[2, target_idx]],
-                                mode='lines',
-                                line=dict(color='blue', width=2),
-                                opacity=0.3,
-                                showlegend=False
-                            ))
+                            ax1.plot([landmarks_array[0, i], landmarks_array[0, target_idx]],
+                                     [landmarks_array[1, i], landmarks_array[1, target_idx]],
+                                     [landmarks_array[2, i], landmarks_array[2, target_idx]],
+                                     'b-', alpha=0.3, linewidth=1)
 
-            fig.update_layout(
-                title=f'Network Visualization ({self.num_landmarks} landmarks)',
-                scene=dict(
-                    xaxis_title='X',
-                    yaxis_title='Y',
-                    zaxis_title='Z',
-                    aspectmode='data',
-                    aspectratio=dict(x=1, y=1, z=1)
-                ),
-                width=800,
-                height=800
-            )
-            fig.show()
+                # draw zero-order edges (red)
+                for i, landmark in enumerate(self.landmarks):
+                    for edge in landmark.zero_order_edges:
+                        if edge.target is not landmark:
+                            target_idx = self.landmarks.index(edge.target)
+                            # only draw if not already connected by first-order edge
+                            is_first_order = any(
+                                fo_edge.target == edge.target for fo_edge in landmark.first_order_edges)
+                            if not is_first_order:
+                                ax1.plot([landmarks_array[0, i], landmarks_array[0, target_idx]],
+                                         [landmarks_array[1, i], landmarks_array[1, target_idx]],
+                                         [landmarks_array[2, i], landmarks_array[2, target_idx]],
+                                         'r-', alpha=0.2, linewidth=0.5)
+
+            ax1.set_xlabel('X')
+            ax1.set_ylabel('Y')
+            ax1.set_zlabel('Z')
+            ax1.set_title('3D Network Structure\n(Blue=1st order, Red=0th order)')
+
+            # 2D projection
+            ax2 = fig.add_subplot(122)
+            scatter2 = ax2.scatter(landmarks_array[0, :], landmarks_array[1, :],
+                                   c=point_counts, cmap='viridis', s=60, alpha=0.7)
+            plt.colorbar(scatter2, ax=ax2, label='Points per Landmark')
+
+            if show_edges:
+                # draw first-order edges
+                for i, landmark in enumerate(self.landmarks):
+                    for edge in landmark.first_order_edges:
+                        if edge.target is not landmark:
+                            target_idx = self.landmarks.index(edge.target)
+                            ax2.plot([landmarks_array[0, i], landmarks_array[0, target_idx]],
+                                     [landmarks_array[1, i], landmarks_array[1, target_idx]],
+                                     'b-', alpha=0.3, linewidth=1)
+
+            ax2.set_xlabel('First Dimension')
+            ax2.set_ylabel('Second Dimension')
+            ax2.set_title('2D Network Projection')
+            ax2.grid(True, alpha=0.3)
+
+            plt.tight_layout()
+            plt.show()
 
         else:
-            print(f"Visualization not supported for {landmarks_array.shape[0]}D data. "
-                  f"Use specialized visualization functions for high-dimensional data.")
+            print(f"Visualization not supported for {landmarks_array.shape[0]}D data.")

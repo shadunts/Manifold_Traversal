@@ -4,10 +4,10 @@ import time
 from scipy.linalg import svd
 import matplotlib.pyplot as plt
 
-from ..utils.utils_TISVD import TISVD_gw
+from utils.tisvd import TISVD_gw
 
-from .traversal_network import TraversalNetwork
-from .training_results import TrainingResults
+from models.traversal_network import TraversalNetwork
+from models.training_results import TrainingResults
 
 
 class ManifoldTraversal:

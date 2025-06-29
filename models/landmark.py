@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.colors as mcolors
-from .edge import FirstOrderEdge, ZeroOrderEdge
+from models.edge import FirstOrderEdge, ZeroOrderEdge
 
 # get all CSS4 colors for visualization
 all_colors = list(mcolors.CSS4_COLORS)
