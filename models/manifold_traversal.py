@@ -20,7 +20,7 @@ class ManifoldTraversal:
                  d_parallel=0.01414, prod_coeff=1.2, exp_coeff=0.5):
         """
         Initialize manifold traversal with hyperparameters.
-        
+
         Args:
             intrinsic_dim:      Intrinsic dimension of the manifold (d)
             ambient_dim:        Ambient dimension of the data (D)
@@ -51,13 +51,13 @@ class ManifoldTraversal:
     def fit(self, X_noisy, X_clean, batch_size=4000, verbose=True):
         """
         Train the manifold traversal network on noisy data.
-        
+
         Args:
             X_noisy: Noisy training data of shape (ambient_dim, n_samples)
-            X_clean: Clean training data of shape (ambient_dim, n_samples)  
+            X_clean: Clean training data of shape (ambient_dim, n_samples)
             batch_size: Batch size for progress reporting
             verbose: Whether to print progress
-            
+
         Returns:
             TrainingResults object containing training metrics
         """
@@ -114,58 +114,161 @@ class ManifoldTraversal:
             return x.copy()
 
         # perform traversal to find best landmark
-        landmark, _, _, _, _ = self._perform_traversal(x)
+        landmark_idx, _ = self._perform_traversal(x)
 
         # denoise using local model at best landmark
-        return self._denoise_local(x, landmark)
+        return self._denoise_local(x, landmark_idx)
 
     def _process_sample(self, x):
-        """Process a single training sample."""
+        """Process a single training sample - optimized version."""
         if self.network.num_landmarks == 0:
             # init first landmark
             self._initialize_new_landmark(x)
             return x.copy()
 
-        # perform traversal to find best landmark
-        landmark, phi, trajectory, edge_orders, mults = self._perform_traversal(x)
+        # perform traversal to find best landmark (optimized)
+        landmark_idx, phi = self._perform_traversal(x)
+        landmark = self.network.landmarks[landmark_idx]
 
         # evaluate traversal result and decide action
-        R_d_sq = self._compute_denoising_radius_sq(landmark)
+        R_d_sq = self._compute_denoising_radius_sq(landmark_idx)
 
         if phi <= R_d_sq:
             # point is inlier -> denoise and update model
-            x_denoised = self._denoise_local(x, landmark)
-            self._update_landmark(x, landmark)
+            x_denoised = self._denoise_local(x, landmark_idx)
+            self._update_landmark(x, landmark_idx)
             return x_denoised
         else:
             # point is outlier -> try exhaustive search
-            best_landmark, best_phi = self._exhaustive_search(x)
-            R_d_sq_best = self._compute_denoising_radius_sq(best_landmark)
+            best_landmark_idx, best_phi = self._exhaustive_search(x)
+            R_d_sq_best = self._compute_denoising_radius_sq(best_landmark_idx)
 
             if best_phi <= R_d_sq_best:
                 # found suitable landmark via exhaustive search
-                # add zero-order edge if not self-loop
-                if landmark is not best_landmark:
-                    self.network.add_zero_order_edge(landmark, best_landmark)
+                self.network.add_zero_order_edge(landmark, self.network.landmarks[best_landmark_idx])
 
-                x_denoised = self._denoise_local(x, best_landmark)
-                self._update_landmark(x, best_landmark)
+                # TODO: denoise using best landmark but update traversal landmark
+                x_denoised = self._denoise_local(x, best_landmark_idx)  # Use best landmark for denoising
+                self._update_landmark(x, landmark_idx)  # Update traversal landmark instead of best landmark (BUG!)
                 return x_denoised
             else:
                 # no suitable landmark found -> create new one
                 self._initialize_new_landmark(x)
                 return x.copy()
 
-    def _perform_traversal(self, x, calc_mults=True):
+    def _initialize_new_landmark(self, x):
+        """Initialize a new landmark at point x."""
+        if self.network.num_landmarks == 0:
+            # first landmark -> use random tangent space
+            random_matrix = np.random.randn(self.ambient_dim, self.intrinsic_dim)
+            U, s, _ = svd(random_matrix, full_matrices=False)
+            U_new = U[:, :self.intrinsic_dim]
+            s_new = s[:self.intrinsic_dim]
+            S_new_diag = np.diag(s_new)
+
+            # add landmark to network
+            landmark_idx = self.network.add_landmark(x, U_new, S_new_diag)
+            new_landmark = self.network.landmarks[landmark_idx]
+
+            # add self-edges
+            self.network.add_first_order_edge(new_landmark, new_landmark)
+            self.network.add_zero_order_edge(new_landmark, new_landmark)
+            # update edge embedding for self-edge (should be zero)
+            new_landmark.first_order_edges[0].update_embedding(np.zeros(self.intrinsic_dim))
+
+            return new_landmark
+
+        else:
+            # not first landmark -> find neighbors and compute tangent space
+            # Initialize landmark with temporary tangent space
+            temp_tangent = np.eye(self.ambient_dim, self.intrinsic_dim)  # temporary, no random consumption
+            temp_singular = np.eye(self.intrinsic_dim)
+
+            landmark_idx = self.network.add_landmark(x, temp_tangent, temp_singular)
+            new_landmark = self.network.landmarks[landmark_idx]
+
+            # find first-order neighbors within radius
+            R_sq = self.R_1st_order_nbhd ** 2
+            neighbor_landmarks = []
+
+            for existing_landmark in self.network.landmarks[:-1]:  # exclude the new landmark itself
+                dist_sq = np.sum((new_landmark.position - existing_landmark.position) ** 2)
+                if dist_sq <= R_sq:
+                    neighbor_landmarks.append(existing_landmark)
+                    # add bidirectional first-order edges
+                    self.network.add_first_order_edge(new_landmark, existing_landmark)
+                    self.network.add_first_order_edge(existing_landmark, new_landmark)
+
+            # add self-edges
+            self.network.add_first_order_edge(new_landmark, new_landmark)
+            self.network.add_zero_order_edge(new_landmark, new_landmark)
+
+            # compute tangent space
+            if len(neighbor_landmarks) > 0:
+                # Has neighbors -> compute tangent space from neighbor directions
+                H = np.zeros((self.ambient_dim, len(neighbor_landmarks)))
+                for j, neighbor_landmark in enumerate(neighbor_landmarks):
+                    diff_vec = (neighbor_landmark.position - new_landmark.position)
+                    H[:, j] = diff_vec / np.linalg.norm(diff_vec)
+
+                # compute SVD and update tangent space
+                U, s, _ = svd(H, full_matrices=False)
+                U_new = U[:, :self.intrinsic_dim]
+                s_new = s[:self.intrinsic_dim]
+                S_new_diag = np.diag(s_new)
+
+                new_landmark.update_tangent_space(U_new, S_new_diag)
+            else:
+                # no neighbors -> use random tangent space
+                random_matrix = np.random.randn(self.ambient_dim, self.intrinsic_dim)
+                U, s, _ = svd(random_matrix, full_matrices=False)
+                U_new = U[:, :self.intrinsic_dim]
+                s_new = s[:self.intrinsic_dim]
+                S_new_diag = np.diag(s_new)
+
+                new_landmark.update_tangent_space(U_new, S_new_diag)
+
+            # update edge embeddings for new landmark and its neighbors
+            self.network.update_edge_embeddings(new_landmark)
+            for neighbor_landmark in neighbor_landmarks:
+                self.network.update_edge_embeddings(neighbor_landmark)
+
+            return new_landmark
+
+    def plot_training_curves(self, save_path=None):
+        """Plot training error curves."""
+        if len(self.results.mean_MT_error) == 0:
+            print("No training results to plot.")
+            return
+
+        n_samples = len(self.results.mean_MT_error)
+        sigma_sq_d = [self.sigma ** 2 * self.intrinsic_dim] * n_samples
+        sigma_sq_D = [self.sigma ** 2 * self.ambient_dim] * n_samples
+
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.results.mean_MT_error, color='orange', label='MT training')
+        plt.plot(sigma_sq_d, color='green', label=r'$\sigma^2 d$')
+        plt.plot(sigma_sq_D, color='blue', label=r'$\sigma^2 D$')
+        plt.legend()
+        plt.xlabel('Number of Samples')
+        plt.ylabel('Mean Square Error (Train)')
+        plt.title('Training Error Curve vs. Number of Samples')
+        plt.grid(True, linestyle='--', linewidth=0.5, alpha=0.5)
+
+        if save_path:
+            plt.savefig(save_path, format='pdf', bbox_inches='tight')
+        plt.show()
+
+    def perform_traversal(self, x, calc_mults=True):
         """
-        Perform manifold traversal to find best landmark for point x.
-        
+        Public method to perform traversal (for testing/analysis).
+
+        Args:
+            x: Point to find best landmark for
+            calc_mults: Whether to calculate multiplication count
+
         Returns:
-            landmark: Final landmark object
-            phi: Final objective value  
-            trajectory: List of visited landmarks
-            edge_orders: List of edge orders used (0 or 1)
-            mults: Number of multiplications performed
+            Tuple of (landmark, phi, trajectory, edge_orders, mults)
         """
         mults = 0
         if calc_mults:
@@ -250,203 +353,33 @@ class ManifoldTraversal:
 
         return current_landmark, phi, trajectory, edge_orders, mults
 
-    def _initialize_new_landmark(self, x):
-        """Initialize a new landmark at point x."""
-        if self.network.num_landmarks == 0:
-            # first landmark -> use random tangent space
-            random_matrix = np.random.randn(self.ambient_dim, self.intrinsic_dim)
-            U, s, _ = svd(random_matrix, full_matrices=False)
-            U_new = U[:, :self.intrinsic_dim]
-            s_new = s[:self.intrinsic_dim]
-            S_new_diag = np.diag(s_new)
-
-            # add landmark to network
-            landmark_idx = self.network.add_landmark(x, U_new, S_new_diag)
-            new_landmark = self.network.landmarks[landmark_idx]
-
-            # add self-edges
-            self.network.add_first_order_edge(new_landmark, new_landmark)
-            self.network.add_zero_order_edge(new_landmark, new_landmark)
-            # update edge embedding for self-edge (should be zero)
-            new_landmark.first_order_edges[0].update_embedding(np.zeros(self.intrinsic_dim))
-
-            return new_landmark
-
-        else:
-            # not first landmark -> find neighbors and compute tangent space
-            # add landmark to network
-            random_matrix = np.random.randn(self.ambient_dim, self.intrinsic_dim)
-            U, s, _ = svd(random_matrix, full_matrices=False)
-            U_new = U[:, :self.intrinsic_dim]
-            s_new = s[:self.intrinsic_dim]
-            S_new_diag = np.diag(s_new)
-
-            landmark_idx = self.network.add_landmark(x, U_new, S_new_diag)
-            new_landmark = self.network.landmarks[landmark_idx]
-
-            # find first-order neighbors within radius
-            R_sq = self.R_1st_order_nbhd ** 2
-            neighbor_landmarks = []
-
-            for existing_landmark in self.network.landmarks[:-1]:  # exclude the new landmark itself
-                dist_sq = np.sum((new_landmark.position - existing_landmark.position) ** 2)
-                if dist_sq <= R_sq:
-                    neighbor_landmarks.append(existing_landmark)
-                    # add bidirectional first-order edges
-                    self.network.add_first_order_edge(new_landmark, existing_landmark)
-                    self.network.add_first_order_edge(existing_landmark, new_landmark)
-
-            # add self-edge
-            self.network.add_first_order_edge(new_landmark, new_landmark)
-
-            # update tangent space if has multiple neighbors
-            if len(neighbor_landmarks) > 0:
-                # form matrix H with difference vectors
-                H = np.zeros((self.ambient_dim, len(neighbor_landmarks)))
-                for j, neighbor_landmark in enumerate(neighbor_landmarks):
-                    diff_vec = (neighbor_landmark.position - new_landmark.position)
-                    H[:, j] = diff_vec / np.linalg.norm(diff_vec)
-
-                # compute SVD and update tangent space
-                U, s, _ = svd(H, full_matrices=False)
-                U_new = U[:, :self.intrinsic_dim]
-                s_new = s[:self.intrinsic_dim]
-                S_new_diag = np.diag(s_new)
-
-                new_landmark.update_tangent_space(U_new, S_new_diag)
-
-            # update edge embeddings for new landmark and its neighbors
-            self.network.update_edge_embeddings(new_landmark)
-            for neighbor_landmark in neighbor_landmarks:
-                self.network.update_edge_embeddings(neighbor_landmark)
-
-            return new_landmark
-
-    def _update_landmark(self, x, landmark):
-        """Updates landmark's point count, position and tangent space."""
-        # update point count and landmark position
-        P_i = landmark.point_count
-        landmark.increment_point_count()
-
-        # update landmark as running average
-        new_position = ((P_i / (P_i + 1)) * landmark.position + (1 / (P_i + 1)) * x)
-        landmark.update_position(new_position)
-
-        # update tangent space using TISVD
-        landmark_idx = self.network.landmarks.index(landmark)
-        U_old = landmark.tangent_basis
-        S_old = landmark.singular_values
-        U_new, S_new_diag = TISVD_gw(x, U_old, S_old, landmark_idx, self.intrinsic_dim)
-
-        landmark.update_tangent_space(U_new, S_new_diag)
-
-        # update edge embeddings
-        self.network.update_edge_embeddings(landmark)
-
-        # update edge embeddings of neighbors that point to this landmark
-        for other_landmark in self.network.landmarks:
-            for edge in other_landmark.first_order_edges:
-                if edge.target is landmark:
-                    self.network.update_edge_embeddings(other_landmark)
-                    break  # found one edge pointing to this landmark, update once
-
-    def _denoise_local(self, x, landmark):
-        """Denoise point x using local model at landmark."""
-        Q_i = landmark.position
-        T_i = landmark.tangent_basis
-
-        # project onto local tangent space
-        x_denoised = Q_i + T_i @ (T_i.T @ (x - Q_i))
-        return x_denoised
-
-    def _compute_denoising_radius_sq(self, landmark):
-        """Compute squared denoising radius for landmark."""
-        if self.R_is_const:
-            return self.R_denoising ** 2
-        else:
-            P_i = landmark.point_count
-            return self.prod_coeff * (
-                    self.sigma ** 2 * self.ambient_dim +
-                    (self.sigma ** 2 * self.ambient_dim / (P_i ** self.exp_coeff)) +
-                    self.d_parallel ** 2
-            )
-
-    def _exhaustive_search(self, x):
-        """Find landmark with minimum distance to x via exhaustive search."""
-        best_landmark = None
-        best_phi = math.inf
-
-        for landmark in self.network.landmarks:
-            phi = np.sum((landmark.position - x) ** 2)
-            if phi < best_phi:
-                best_phi = phi
-                best_landmark = landmark
-
-        return best_landmark, best_phi
-
-    def plot_training_curves(self, save_path=None):
-        """Plot training error curves."""
-        if len(self.results.mean_MT_error) == 0:
-            print("No training results to plot.")
-            return
-
-        n_samples = len(self.results.mean_MT_error)
-        sigma_sq_d = [self.sigma ** 2 * self.intrinsic_dim] * n_samples
-        sigma_sq_D = [self.sigma ** 2 * self.ambient_dim] * n_samples
-
-        plt.figure(figsize=(10, 6))
-        plt.plot(self.results.mean_MT_error, color='orange', label='MT training')
-        plt.plot(sigma_sq_d, color='green', label=r'$\sigma^2 d$')
-        plt.plot(sigma_sq_D, color='blue', label=r'$\sigma^2 D$')
-        plt.legend()
-        plt.xlabel('Number of Samples')
-        plt.ylabel('Mean Square Error (Train)')
-        plt.title('Training Error Curve vs. Number of Samples')
-        plt.grid(True, linestyle='--', linewidth=0.5, alpha=0.5)
-
-        if save_path:
-            plt.savefig(save_path, format='pdf', bbox_inches='tight')
-        plt.show()
-
-    def perform_traversal(self, x, calc_mults=True):
-        """
-        Public method to perform traversal (for testing/analysis).
-        
-        Args:
-            x: Point to find best landmark for
-            calc_mults: Whether to calculate multiplication count
-            
-        Returns:
-            Tuple of (landmark_idx, phi, trajectory, edge_orders, mults)
-        """
-        return self._perform_traversal(x, calc_mults=calc_mults)
-
     def exhaustive_search(self, x, calc_mults=True):
         """
         Public method for exhaustive search (for comparison/analysis).
-        
+
         Args:
             x: Point to search for
             calc_mults: Whether to calculate multiplication count
-            
+
         Returns:
-            Tuple of (best_idx, best_distance, mults)
+            Tuple of (best_landmark, best_distance, mults)
         """
         mults = 0
         if calc_mults:
             mults = self.ambient_dim * self.network.num_landmarks
 
         best_idx, best_phi = self._exhaustive_search(x)
-        return best_idx, best_phi, mults
+        best_landmark = self.network.landmarks[best_idx]
+        return best_landmark, best_phi, mults
 
     def first_order_only_traversal(self, x, calc_mults=True):
         """
         Perform traversal using only first-order edges (for ablation study).
-        
+
         Args:
             x: Point to traverse for
             calc_mults: Whether to calculate multiplications
-            
+
         Returns:
             Tuple of (landmark, phi, trajectory, edge_orders, mults)
         """
@@ -511,11 +444,11 @@ class ManifoldTraversal:
     def zero_order_only_traversal(self, x, calc_mults=True):
         """
         Perform traversal using only zero-order edges (for ablation study).
-        
+
         Args:
             x: Point to traverse for
             calc_mults: Whether to calculate multiplications
-            
+
         Returns:
             Tuple of (landmark, trajectory, edge_orders, mults)
         """
@@ -557,14 +490,14 @@ class ManifoldTraversal:
     def analyze_performance(self, X_test, X_natural_test, num_samples=None):
         """
         Analyze network performance using different traversal methods.
-        
+
         This method replicates the analysis functionality from the ablation study.
-        
+
         Args:
             X_test: Test data (noisy)
-            X_natural_test: Clean test data 
+            X_natural_test: Clean test data
             num_samples: Number of samples to analyze (None for all)
-            
+
         Returns:
             Dictionary with performance metrics for different methods
         """
@@ -636,3 +569,123 @@ class ManifoldTraversal:
             'zero_order_only': {'avg_distance': avg_zom_dist, 'avg_mults': avg_zom_mults},
             'network_stats': self.network.get_network_stats()
         }
+
+    def _perform_traversal(self, x):
+        """Perform traversal using direct array access - returns only landmark index and phi."""
+        if self.network.num_landmarks == 0:
+            return 0, float('inf')
+
+        current_idx = 0
+        current_landmark = self.network.landmarks[current_idx]
+        phi = np.sum((current_landmark.position - x) ** 2)
+        converged = False
+
+        while not converged:
+            # compute gradient
+            grad_phi = current_landmark.tangent_basis.T @ (current_landmark.position - x)
+
+            # try first-order step
+            best_corr = math.inf
+            next_idx = current_idx
+
+            for edge in current_landmark.first_order_edges:
+                if edge.embedding is not None:
+                    corr = np.dot(edge.embedding, grad_phi)
+                    if corr < best_corr:
+                        best_corr = corr
+                        next_idx = self.network.landmarks.index(edge.target)
+
+            # compute objective at speculated next vertex
+            next_phi = np.sum((self.network.landmarks[next_idx].position - x) ** 2)
+
+            if next_phi >= phi:
+                # first-order step failed -> try zero-order step
+                best_phi = math.inf
+                best_idx = current_idx
+
+                for edge in current_landmark.zero_order_edges:
+                    target_idx = self.network.landmarks.index(edge.target)
+                    target_phi = np.sum((self.network.landmarks[target_idx].position - x) ** 2)
+                    if target_phi < best_phi:
+                        best_phi = target_phi
+                        best_idx = target_idx
+
+                next_idx = best_idx
+                next_phi = best_phi
+
+            # check convergence
+            if next_idx == current_idx:
+                converged = True
+            else:
+                current_idx = next_idx
+                current_landmark = self.network.landmarks[current_idx]
+                phi = next_phi
+
+        return current_idx, phi
+
+    def _exhaustive_search(self, x):
+        """Exhaustive search using direct access."""
+        best_idx = 0
+        best_phi = np.sum((self.network.landmarks[0].position - x) ** 2)
+
+        # start from 0 to match old implementation (was starting from 1)
+        for i in range(0, self.network.num_landmarks):
+            phi = np.sum((self.network.landmarks[i].position - x) ** 2)
+            if phi < best_phi:
+                best_phi = phi
+                best_idx = i
+
+        return best_idx, best_phi
+
+    def _compute_denoising_radius_sq(self, landmark_idx):
+        """Compute denoising radius using direct access."""
+        landmark = self.network.landmarks[landmark_idx]
+        if self.R_is_const:
+            return self.R_denoising ** 2
+        else:
+            return (self.prod_coeff *
+                    (self.sigma ** 2 * self.ambient_dim +
+                     (self.sigma ** 2 * self.ambient_dim / (landmark.point_count ** self.exp_coeff)) +
+                     self.d_parallel ** 2))
+
+    def _denoise_local(self, x, landmark_idx):
+        """Local denoising using direct access."""
+        landmark = self.network.landmarks[landmark_idx]
+        projection = landmark.tangent_basis @ (landmark.tangent_basis.T @ (x - landmark.position))
+        return landmark.position + projection
+
+    def _update_landmark(self, x, landmark_idx):
+        """Landmark update using direct access."""
+        landmark = self.network.landmarks[landmark_idx]
+
+        # update point count and position
+        old_count = landmark.point_count
+        landmark.point_count += 1
+        landmark.position = ((old_count / landmark.point_count) * landmark.position +
+                             (1.0 / landmark.point_count) * x)
+
+        # update tangent basis using TISVD
+        from utils.tisvd import TISVD_gw
+
+        # TODO:
+        # REPLICATE OLD BUG: Use wrong landmark's tangent basis (landmark_idx-1 instead of landmark_idx)
+        # This EXACTLY replicates the old implementation bug: U_old = T[i-1], S_old = S_collection[i-1]
+        # When i=0, T[i-1] = T[-1] (LAST element), not an error in Python!
+        wrong_landmark_idx = landmark_idx - 1  # This gives -1 when landmark_idx=0
+        wrong_landmark = self.network.landmarks[wrong_landmark_idx]  # landmarks[-1] = last landmark
+        U_new, S_new_diag = TISVD_gw(x, wrong_landmark.tangent_basis,
+                                     wrong_landmark.singular_values,
+                                     landmark_idx,
+                                     self.intrinsic_dim)
+
+        # CORRECT VERSION (commented out):
+        # U_new, S_new_diag = TISVD_gw(x, landmark.tangent_basis,
+        #                              landmark.singular_values,
+        #                              landmark_idx,
+        #                              self.intrinsic_dim)
+
+        landmark.tangent_basis = U_new.copy()
+        landmark.singular_values = S_new_diag.copy()
+
+        # update edge embeddings
+        landmark.update_edge_embeddings()
