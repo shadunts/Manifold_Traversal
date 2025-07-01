@@ -30,7 +30,7 @@ class Landmark:
         self.point_count = point_count
 
         # graph connectivity
-        self.first_order_edges = []  # list of first-order Edge objects
+        self.first_order_edges = {}  # dict: target_landmark -> Edge object
         self.zero_order_edges = []  # list of zero-order Edge objects
 
         # visual
@@ -41,7 +41,7 @@ class Landmark:
     def add_first_order_edge(self, target_landmark, weight=1.0):
         """Add a first-order edge to another landmark."""
         edge = FirstOrderEdge(target_landmark, weight)
-        self.first_order_edges.append(edge)
+        self.first_order_edges[target_landmark] = edge
         return edge
 
     def add_zero_order_edge(self, target_landmark, weight=1.0):
@@ -50,9 +50,13 @@ class Landmark:
         self.zero_order_edges.append(edge)
         return edge
 
+    def get_first_order_edge_to(self, target_landmark):
+        """Get the first-order edge to a specific target landmark (O(1) lookup)."""
+        return self.first_order_edges.get(target_landmark, None)
+
     def update_edge_embeddings(self):
         """Update edge embeddings for all first-order edges."""
-        for edge in self.first_order_edges:
+        for edge in self.first_order_edges.values():
             embedding = self.tangent_basis.T @ (edge.target.position - self.position)
             edge.update_embedding(embedding)
 

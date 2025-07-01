@@ -88,7 +88,7 @@ class TraversalNetwork:
             # edges if requested
             if show_edges:
                 for i, landmark in enumerate(self.landmarks):
-                    for edge in landmark.first_order_edges:
+                    for edge in landmark.first_order_edges.values():
                         if edge.target is not landmark:  # Skip self-edges
                             # Find target landmark index for plotting
                             target_idx = self.landmarks.index(edge.target)
@@ -118,7 +118,7 @@ class TraversalNetwork:
             if show_edges:
                 # draw first-order edges (blue)
                 for i, landmark in enumerate(self.landmarks):
-                    for edge in landmark.first_order_edges:
+                    for edge in landmark.first_order_edges.values():
                         if edge.target is not landmark:  # skip self-edges
                             target_idx = self.landmarks.index(edge.target)
                             ax1.plot([landmarks_array[0, i], landmarks_array[0, target_idx]],
@@ -133,7 +133,7 @@ class TraversalNetwork:
                             target_idx = self.landmarks.index(edge.target)
                             # only draw if not already connected by first-order edge
                             is_first_order = any(
-                                fo_edge.target == edge.target for fo_edge in landmark.first_order_edges)
+                                fo_edge.target == edge.target for fo_edge in landmark.first_order_edges.values())
                             if not is_first_order:
                                 ax1.plot([landmarks_array[0, i], landmarks_array[0, target_idx]],
                                          [landmarks_array[1, i], landmarks_array[1, target_idx]],
@@ -154,7 +154,7 @@ class TraversalNetwork:
             if show_edges:
                 # draw first-order edges
                 for i, landmark in enumerate(self.landmarks):
-                    for edge in landmark.first_order_edges:
+                    for edge in landmark.first_order_edges.values():
                         if edge.target is not landmark:
                             target_idx = self.landmarks.index(edge.target)
                             ax2.plot([landmarks_array[0, i], landmarks_array[0, target_idx]],
