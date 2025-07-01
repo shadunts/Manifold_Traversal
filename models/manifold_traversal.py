@@ -179,33 +179,39 @@ class ManifoldTraversal:
 
         else:
             # not first landmark -> find neighbors and compute tangent space
-            # Initialize landmark with temporary tangent space
-            temp_tangent = np.eye(self.ambient_dim, self.intrinsic_dim)  # temporary, no random consumption
-            temp_singular = np.eye(self.intrinsic_dim)
+            # Add landmark to network first (will be updated below)
+            # Use zero tangent space initially to avoid consuming random numbers
+            temp_tangent = np.zeros((self.ambient_dim, self.intrinsic_dim))
+            temp_singular = np.zeros((self.intrinsic_dim, self.intrinsic_dim))
 
             landmark_idx = self.network.add_landmark(x, temp_tangent, temp_singular)
             new_landmark = self.network.landmarks[landmark_idx]
 
-            # find first-order neighbors within radius
+            # find first-order neighbors within radius (match old implementation order)
             R_sq = self.R_1st_order_nbhd ** 2
             neighbor_landmarks = []
 
-            for existing_landmark in self.network.landmarks[:-1]:  # exclude the new landmark itself
+            # Check ALL landmarks including self (to match old implementation)
+            for idx, existing_landmark in enumerate(self.network.landmarks):
                 dist_sq = np.sum((new_landmark.position - existing_landmark.position) ** 2)
                 if dist_sq <= R_sq:
-                    neighbor_landmarks.append(existing_landmark)
-                    # add bidirectional first-order edges
-                    self.network.add_first_order_edge(new_landmark, existing_landmark)
-                    self.network.add_first_order_edge(existing_landmark, new_landmark)
+                    if idx < len(self.network.landmarks) - 1:  # Not self-edge
+                        neighbor_landmarks.append(existing_landmark)
+                        # add bidirectional first-order edges
+                        self.network.add_first_order_edge(new_landmark, existing_landmark)
+                        self.network.add_first_order_edge(existing_landmark, new_landmark)
+                    else:  # Self-edge (idx == len(landmarks) - 1, i.e., new landmark)
+                        # Add self-edge in same position as old implementation
+                        self.network.add_first_order_edge(new_landmark, new_landmark)
 
-            # add self-edges
-            self.network.add_first_order_edge(new_landmark, new_landmark)
+            # add zero-order self-edge
             self.network.add_zero_order_edge(new_landmark, new_landmark)
 
             # compute tangent space
             if len(neighbor_landmarks) > 0:
                 # Has neighbors -> compute tangent space from neighbor directions
-                H = np.zeros((self.ambient_dim, len(neighbor_landmarks)))
+                # Use same H matrix pattern as old implementation
+                H = np.zeros((self.ambient_dim, (self.intrinsic_dim + 1) * len(neighbor_landmarks)))
                 for j, neighbor_landmark in enumerate(neighbor_landmarks):
                     diff_vec = (neighbor_landmark.position - new_landmark.position)
                     H[:, j] = diff_vec / np.linalg.norm(diff_vec)
@@ -227,10 +233,21 @@ class ManifoldTraversal:
 
                 new_landmark.update_tangent_space(U_new, S_new_diag)
 
-            # update edge embeddings for new landmark and its neighbors
-            self.network.update_edge_embeddings(new_landmark)
-            for neighbor_landmark in neighbor_landmarks:
-                self.network.update_edge_embeddings(neighbor_landmark)  # TODO: just update the nwe edge embedding
+            # update edge embeddings - match old implementation exactly
+            # For each first-order edge of the new landmark (in same order as old implementation)
+            for edge in new_landmark.first_order_edges:
+                target_landmark = edge.target
+                # Embedding from new_landmark to target
+                edge.update_embedding(new_landmark.tangent_basis.T @ (target_landmark.position - new_landmark.position))
+
+                # Update reverse edge embedding (simpler pattern matching old implementation)
+                if target_landmark != new_landmark:  # Don't update reverse for self-edge
+                    # Find reverse edge in target_landmark's edges
+                    for reverse_edge in target_landmark.first_order_edges:
+                        if reverse_edge.target == new_landmark:
+                            reverse_edge.update_embedding(
+                                target_landmark.tangent_basis.T @ (new_landmark.position - target_landmark.position))
+                            break
 
             return new_landmark
 
@@ -327,8 +344,9 @@ class ManifoldTraversal:
             deg_0 = len(zero_order_edges)
 
             if deg_0 > 0:
-                best_landmark = current_landmark
-                best_phi = phi
+                # Match old implementation: always find best zero-order neighbor
+                best_landmark = self.network.landmarks[0]  # Start with landmark 0 (like old implementation)
+                best_phi = math.inf  # Start with infinity to find best neighbor
 
                 if calc_mults:
                     mults += self.ambient_dim * deg_0
@@ -339,16 +357,28 @@ class ManifoldTraversal:
                         best_phi = neighbor_phi
                         best_landmark = edge.target
 
-                if best_landmark is not current_landmark:
-                    # zero-order step improves objective
-                    current_landmark = best_landmark
-                    phi = best_phi
-                    trajectory.append(current_landmark)
-                    edge_orders.append(0)
-                    continue
+                # Match old implementation: always move to best zero-order neighbor
+                # (even if it doesn't improve objective - this helps escape local minima)
+                next_landmark = best_landmark
+                next_phi = best_phi
+                order = 0
+            else:
+                # No zero-order edges, stay at current landmark
+                next_landmark = current_landmark
+                next_phi = phi
+                order = 0
 
-            # no improvement found - converged
-            converged = True
+            # Check for convergence (same logic as old implementation)
+            if next_landmark is current_landmark:
+                # If no improvement is found (i.e., next_landmark == current_landmark)
+                # declare convergence and exit the loop.
+                converged = True
+            else:
+                # Otherwise, update to the new vertex, append to the trajectory, and continue the loop.
+                current_landmark = next_landmark
+                phi = next_phi
+                trajectory.append(current_landmark)
+                edge_orders.append(order)
 
         return current_landmark, phi, trajectory, edge_orders, mults
 
@@ -599,8 +629,9 @@ class ManifoldTraversal:
 
             if next_phi >= phi:
                 # first-order step failed -> try zero-order step
-                best_phi = math.inf
-                best_idx = current_idx
+                # Match old implementation: always find best zero-order neighbor
+                best_phi = math.inf  # Start with infinity to find best neighbor
+                best_idx = 0  # Start with landmark 0 (like old implementation)
 
                 for edge in current_landmark.zero_order_edges:
                     target_idx = self.network.landmarks.index(edge.target)
@@ -609,10 +640,12 @@ class ManifoldTraversal:
                         best_phi = target_phi
                         best_idx = target_idx
 
+                # Match old implementation: always move to best zero-order neighbor
+                # (even if it doesn't improve objective)
                 next_idx = best_idx
                 next_phi = best_phi
 
-            # check convergence
+            # check convergence (same logic as old implementation)
             if next_idx == current_idx:
                 converged = True
             else:
@@ -663,8 +696,6 @@ class ManifoldTraversal:
                              (1.0 / landmark.point_count) * x)
 
         # update tangent basis using TISVD
-        from utils.tisvd import TISVD_gw
-
         U_new, S_new_diag = TISVD_gw(x, landmark.tangent_basis,
                                      landmark.singular_values,
                                      landmark_idx,
@@ -673,5 +704,15 @@ class ManifoldTraversal:
         landmark.tangent_basis = U_new.copy()
         landmark.singular_values = S_new_diag.copy()
 
-        # update edge embeddings
+        # update edge embeddings bidirectionally (like old implementation)
         landmark.update_edge_embeddings()
+
+        # update reverse edge embeddings from neighbors back to this landmark
+        for edge in landmark.first_order_edges:
+            neighbor = edge.target
+            if neighbor != landmark:  # Don't update self-edge twice
+                for reverse_edge in neighbor.first_order_edges:
+                    if reverse_edge.target == landmark:
+                        reverse_embedding = neighbor.tangent_basis.T @ (landmark.position - neighbor.position)
+                        reverse_edge.update_embedding(reverse_embedding)
+
