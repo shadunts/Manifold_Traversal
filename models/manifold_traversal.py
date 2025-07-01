@@ -147,9 +147,8 @@ class ManifoldTraversal:
                 # found suitable landmark via exhaustive search
                 self.network.add_zero_order_edge(landmark, self.network.landmarks[best_landmark_idx])
 
-                # TODO: denoise using best landmark but update traversal landmark
-                x_denoised = self._denoise_local(x, best_landmark_idx)  # Use best landmark for denoising
-                self._update_landmark(x, landmark_idx)  # Update traversal landmark instead of best landmark (BUG!)
+                x_denoised = self._denoise_local(x, best_landmark_idx)
+                self._update_landmark(x, best_landmark_idx)
                 return x_denoised
             else:
                 # no suitable landmark found -> create new one
@@ -231,7 +230,7 @@ class ManifoldTraversal:
             # update edge embeddings for new landmark and its neighbors
             self.network.update_edge_embeddings(new_landmark)
             for neighbor_landmark in neighbor_landmarks:
-                self.network.update_edge_embeddings(neighbor_landmark)
+                self.network.update_edge_embeddings(neighbor_landmark)  # TODO: just update the nwe edge embedding
 
             return new_landmark
 
@@ -628,8 +627,7 @@ class ManifoldTraversal:
         best_idx = 0
         best_phi = np.sum((self.network.landmarks[0].position - x) ** 2)
 
-        # start from 0 to match old implementation (was starting from 1)
-        for i in range(0, self.network.num_landmarks):
+        for i in range(1, self.network.num_landmarks):
             phi = np.sum((self.network.landmarks[i].position - x) ** 2)
             if phi < best_phi:
                 best_phi = phi
@@ -667,22 +665,10 @@ class ManifoldTraversal:
         # update tangent basis using TISVD
         from utils.tisvd import TISVD_gw
 
-        # TODO:
-        # REPLICATE OLD BUG: Use wrong landmark's tangent basis (landmark_idx-1 instead of landmark_idx)
-        # This EXACTLY replicates the old implementation bug: U_old = T[i-1], S_old = S_collection[i-1]
-        # When i=0, T[i-1] = T[-1] (LAST element), not an error in Python!
-        wrong_landmark_idx = landmark_idx - 1  # This gives -1 when landmark_idx=0
-        wrong_landmark = self.network.landmarks[wrong_landmark_idx]  # landmarks[-1] = last landmark
-        U_new, S_new_diag = TISVD_gw(x, wrong_landmark.tangent_basis,
-                                     wrong_landmark.singular_values,
+        U_new, S_new_diag = TISVD_gw(x, landmark.tangent_basis,
+                                     landmark.singular_values,
                                      landmark_idx,
                                      self.intrinsic_dim)
-
-        # CORRECT VERSION (commented out):
-        # U_new, S_new_diag = TISVD_gw(x, landmark.tangent_basis,
-        #                              landmark.singular_values,
-        #                              landmark_idx,
-        #                              self.intrinsic_dim)
 
         landmark.tangent_basis = U_new.copy()
         landmark.singular_values = S_new_diag.copy()
