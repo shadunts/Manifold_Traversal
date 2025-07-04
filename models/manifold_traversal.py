@@ -162,7 +162,7 @@ class ManifoldTraversal:
             random_matrix = np.random.randn(self.ambient_dim, self.intrinsic_dim)
             U, s, _ = svd(random_matrix, full_matrices=False)
             U_new = U[:, :self.intrinsic_dim]
-            s_new = s[:self.intrinsic_dim]
+            s_new = 0.0 * s[:self.intrinsic_dim]
             S_new_diag = np.diag(s_new)
 
             # add landmark to network
@@ -699,7 +699,7 @@ class ManifoldTraversal:
                              (1.0 / landmark.point_count) * x)
 
         # update tangent basis using TISVD
-        U_new, S_new_diag = TISVD_gw(x, landmark.tangent_basis,
+        U_new, S_new_diag = TISVD_gw(x - landmark.position, landmark.tangent_basis,
                                      landmark.singular_values,
                                      landmark_idx,
                                      self.intrinsic_dim)

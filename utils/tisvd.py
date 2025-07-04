@@ -14,7 +14,7 @@ def check_for_numerical_stability(x_perp, x_perp_norm, p_x, S_exp):
         K = S_exp + np.dot(Ma, Ma.T)
         x_perp_new = x_perp * 1e6
         x_perp_norm_new = np.linalg.norm(x_perp_new)
-        unit_norm_x_perp = x_perp_new / x_perp_norm_new
+        unit_norm_x_perp = (x_perp_new / x_perp_norm_new).reshape(-1, 1)
         # # print('Amended x_perp_norm = {}'.format(x_perp_norm_new))
         # # print('Amended unit_norm_x_perp = {}'.format(unit_norm_x_perp))
     else:
