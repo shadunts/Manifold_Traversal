@@ -341,7 +341,6 @@ class ManifoldTraversal:
 
                 if next_phi >= phi:
                     # first-order step failed -> try zero-order step
-                    # FIXED: Only consider explicitly stored zero-order edges like old code
                     best_idx = current_idx
                     best_phi = math.inf
 
@@ -513,7 +512,7 @@ class ManifoldTraversal:
         current_idx = 0  # start at first landmark
         current_landmark = self.network.landmarks[current_idx]
         converged = False
-        trajectory = [current_idx]  # store indices like old code
+        trajectory = [current_idx]
         edge_orders = []
 
         while not converged:

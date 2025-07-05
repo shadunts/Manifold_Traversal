@@ -629,13 +629,10 @@ class GWAblationStudy:
             except FileNotFoundError:
                 raise FileNotFoundError(f"Neither {load_path} nor {json_path} found")
 
-        # handle both old and new format
         if 'networks' in results_dict:
-            # Old format - try to load directly
             self.networks = results_dict['networks']
             self.network_results = results_dict['network_results']
         else:
-            # New format - networks and results are not saved
             print("Note: Full network objects not available in saved results.")
             print("Only configuration and analysis data loaded.")
             self.networks = []
@@ -648,7 +645,6 @@ class GWAblationStudy:
         self.D = results_dict['D']
         self.d = results_dict['d']
 
-        # handle optional fields that might not be in older saves
         self.N_train = results_dict.get('N_train', None)
         self.N_test = results_dict.get('N_test', None)
 
