@@ -1,8 +1,7 @@
 """
 Manifold Traversal Utilities Package
 
-This package contains utility functions for manifold traversal:
-- utils_TISVD: Truncated Incremental SVD implementations
+This package contains utility functions for manifold traversal
 """
 
 from .tisvd import TISVD_gw, TISVD
