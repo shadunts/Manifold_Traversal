@@ -30,7 +30,7 @@ class Landmark:
         self.point_count = point_count
 
         # graph connectivity
-        self.first_order_edges = {}  # dict: target_landmark -> Edge object
+        self.first_order_edges = {}  # dict: target_idx -> Edge object
         self.zero_order_edges = []  # list of zero-order Edge objects
 
         # visual
@@ -38,26 +38,27 @@ class Landmark:
             color = all_colors[np.random.randint(0, len(all_colors))]
         self.color = color
 
-    def add_first_order_edge(self, target_landmark, weight=1.0):
-        """Add a first-order edge to another landmark."""
-        edge = FirstOrderEdge(target_landmark, weight)
-        self.first_order_edges[target_landmark] = edge
+    def add_first_order_edge(self, target_idx, weight=1.0):
+        """Add a first-order edge to another landmark by index."""
+        edge = FirstOrderEdge(target_idx, weight)
+        self.first_order_edges[target_idx] = edge
         return edge
 
-    def add_zero_order_edge(self, target_landmark, weight=1.0):
-        """Add a zero-order edge to another landmark."""
-        edge = ZeroOrderEdge(target_landmark, weight)
+    def add_zero_order_edge(self, target_idx, weight=1.0):
+        """Add a zero-order edge to another landmark by index."""
+        edge = ZeroOrderEdge(target_idx, weight)
         self.zero_order_edges.append(edge)
         return edge
 
-    def get_first_order_edge_to(self, target_landmark):
+    def get_first_order_edge_to(self, target_idx):
         """Get the first-order edge to a specific target landmark (O(1) lookup)."""
-        return self.first_order_edges.get(target_landmark, None)
+        return self.first_order_edges.get(target_idx, None)
 
-    def update_edge_embeddings(self):
+    def update_edge_embeddings(self, landmarks):
         """Update edge embeddings for all first-order edges."""
         for edge in self.first_order_edges.values():
-            embedding = self.tangent_basis.T @ (edge.target.position - self.position)
+            target_landmark = landmarks[edge.target_idx]
+            embedding = self.tangent_basis.T @ (target_landmark.position - self.position)
             edge.update_embedding(embedding)
 
     def update_position(self, new_position):

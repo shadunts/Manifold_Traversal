@@ -24,17 +24,20 @@ class TraversalNetwork:
         self.landmarks.append(landmark)
         return len(self.landmarks) - 1  # Return index of new landmark
 
-    def add_first_order_edge(self, from_landmark, to_landmark, weight=1.0):
+    def add_first_order_edge(self, from_landmark_idx, to_landmark_idx, weight=1.0):
         """Add a first-order edge between landmarks."""
-        return from_landmark.add_first_order_edge(to_landmark, weight)
+        from_landmark = self.landmarks[from_landmark_idx]
+        return from_landmark.add_first_order_edge(to_landmark_idx, weight)
 
-    def add_zero_order_edge(self, from_landmark, to_landmark, weight=1.0):
+    def add_zero_order_edge(self, from_landmark_idx, to_landmark_idx, weight=1.0):
         """Add a zero-order edge between landmarks."""
-        return from_landmark.add_zero_order_edge(to_landmark, weight)
+        from_landmark = self.landmarks[from_landmark_idx]
+        return from_landmark.add_zero_order_edge(to_landmark_idx, weight)
 
-    def update_edge_embeddings(self, landmark):
+    def update_edge_embeddings(self, landmark_idx):
         """Update edge embeddings for a specific landmark."""
-        landmark.update_edge_embeddings()
+        landmark = self.landmarks[landmark_idx]
+        landmark.update_edge_embeddings(self.landmarks)
 
     def get_landmark_positions(self):
         """Get all landmark positions as a numpy array."""
@@ -89,9 +92,8 @@ class TraversalNetwork:
             if show_edges:
                 for i, landmark in enumerate(self.landmarks):
                     for edge in landmark.first_order_edges.values():
-                        if edge.target is not landmark:  # Skip self-edges
-                            # Find target landmark index for plotting
-                            target_idx = self.landmarks.index(edge.target)
+                        if edge.target_idx != i:  # Skip self-edges
+                            target_idx = edge.target_idx
                             plt.plot([landmarks_array[0, i], landmarks_array[0, target_idx]],
                                      [landmarks_array[1, i], landmarks_array[1, target_idx]],
                                      'b-', alpha=0.3, linewidth=1)
@@ -119,8 +121,8 @@ class TraversalNetwork:
                 # draw first-order edges (blue)
                 for i, landmark in enumerate(self.landmarks):
                     for edge in landmark.first_order_edges.values():
-                        if edge.target is not landmark:  # skip self-edges
-                            target_idx = self.landmarks.index(edge.target)
+                        if edge.target_idx != i:  # skip self-edges
+                            target_idx = edge.target_idx
                             ax1.plot([landmarks_array[0, i], landmarks_array[0, target_idx]],
                                      [landmarks_array[1, i], landmarks_array[1, target_idx]],
                                      [landmarks_array[2, i], landmarks_array[2, target_idx]],
@@ -129,11 +131,11 @@ class TraversalNetwork:
                 # draw zero-order edges (red)
                 for i, landmark in enumerate(self.landmarks):
                     for edge in landmark.zero_order_edges:
-                        if edge.target is not landmark:
-                            target_idx = self.landmarks.index(edge.target)
+                        if edge.target_idx != i:
+                            target_idx = edge.target_idx
                             # only draw if not already connected by first-order edge
                             is_first_order = any(
-                                fo_edge.target == edge.target for fo_edge in landmark.first_order_edges.values())
+                                fo_edge.target_idx == edge.target_idx for fo_edge in landmark.first_order_edges.values())
                             if not is_first_order:
                                 ax1.plot([landmarks_array[0, i], landmarks_array[0, target_idx]],
                                          [landmarks_array[1, i], landmarks_array[1, target_idx]],
@@ -155,8 +157,8 @@ class TraversalNetwork:
                 # draw first-order edges
                 for i, landmark in enumerate(self.landmarks):
                     for edge in landmark.first_order_edges.values():
-                        if edge.target is not landmark:
-                            target_idx = self.landmarks.index(edge.target)
+                        if edge.target_idx != i:
+                            target_idx = edge.target_idx
                             ax2.plot([landmarks_array[0, i], landmarks_array[0, target_idx]],
                                      [landmarks_array[1, i], landmarks_array[1, target_idx]],
                                      'b-', alpha=0.3, linewidth=1)

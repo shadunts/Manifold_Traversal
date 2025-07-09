@@ -140,14 +140,13 @@ class ManifoldTraversal:
         else:
             # point is outlier -> try exhaustive search
             best_landmark_idx, best_phi = self._exhaustive_search(x)
-            best_landmark = self.network.landmarks[best_landmark_idx]
             R_d_sq_best = self._compute_denoising_radius_sq(best_landmark_idx)
 
             if best_phi <= R_d_sq_best:
                 # add the zero-order edge first then update the landmark which increments the point count
-                original_landmark = self.network.landmarks[landmark_idx]
-                self.network.add_zero_order_edge(original_landmark, best_landmark)
-                self._update_landmark(x, best_landmark_idx)  # point_count += 1
+                self.network.add_zero_order_edge(landmark_idx, best_landmark_idx)
+
+                self._update_landmark(x, best_landmark_idx)
                 x_denoised = self._denoise_local(x, best_landmark_idx)
 
                 return x_denoised
@@ -168,17 +167,16 @@ class ManifoldTraversal:
 
             # add landmark to network
             landmark_idx = self.network.add_landmark(x, U_new, S_new_diag)
-            new_landmark = self.network.landmarks[landmark_idx]
 
             # add self-edges
-            self.network.add_first_order_edge(new_landmark, new_landmark)
-            self.network.add_zero_order_edge(new_landmark, new_landmark)
+            self.network.add_first_order_edge(landmark_idx, landmark_idx)
+            self.network.add_zero_order_edge(landmark_idx, landmark_idx)
             # update edge embedding for self-edge (should be zero)
-            self_edge = new_landmark.get_first_order_edge_to(new_landmark)
+            self_edge = self.network.landmarks[landmark_idx].get_first_order_edge_to(landmark_idx)
             if self_edge is not None:
                 self_edge.update_embedding(np.zeros(self.intrinsic_dim))
 
-            return new_landmark
+            return landmark_idx
 
         else:
             landmarks = self.network.landmarks
@@ -197,24 +195,23 @@ class ManifoldTraversal:
 
             # find neighbors
             for idx, existing_landmark in enumerate(landmarks):
+                if idx == landmark_idx:  # skip self
+                    continue
                 dist_sq = np.sum((new_landmark.position - existing_landmark.position) ** 2)
                 if dist_sq <= R_sq:
                     neighbor_indices.append(idx)
-                    if idx < len(landmarks) - 1:  # Not self-edge
-                        neighbor_landmarks.append(existing_landmark)
+                    neighbor_landmarks.append(existing_landmark)
 
             # add edges
             for idx in neighbor_indices:
-                if idx < len(landmarks) - 1:  # not self-edge
-                    existing_landmark = landmarks[idx]
-                    # add bidirectional first-order edges
-                    self.network.add_first_order_edge(new_landmark, existing_landmark)
-                    self.network.add_first_order_edge(existing_landmark, new_landmark)
-                else:  # self-edge (idx == len(landmarks) - 1, i.e., new landmark)
-                    self.network.add_first_order_edge(new_landmark, new_landmark)
+                # add bidirectional first-order edges
+                self.network.add_first_order_edge(landmark_idx, idx)
+                self.network.add_first_order_edge(idx, landmark_idx)
 
+            # add self-edge
+            self.network.add_first_order_edge(landmark_idx, landmark_idx)
             # add zero-order self-edge
-            self.network.add_zero_order_edge(new_landmark, new_landmark)
+            self.network.add_zero_order_edge(landmark_idx, landmark_idx)
 
             # compute tangent space
             if len(neighbor_landmarks) > 0:
@@ -244,18 +241,18 @@ class ManifoldTraversal:
             # update edge embeddings
             # for each first-order edge of the new landmark
             for edge in new_landmark.first_order_edges.values():
-                target_landmark = edge.target
+                target_landmark = landmarks[edge.target_idx]
                 # Embedding from new_landmark to target
                 edge.update_embedding(new_landmark.tangent_basis.T @ (target_landmark.position - new_landmark.position))
 
                 # update reverse edge embedding
-                if target_landmark != new_landmark:  # don't update reverse for self-edge
-                    reverse_edge = target_landmark.get_first_order_edge_to(new_landmark)
+                if edge.target_idx != landmark_idx:  # don't update reverse for self-edge
+                    reverse_edge = target_landmark.get_first_order_edge_to(landmark_idx)
                     if reverse_edge is not None:
                         reverse_edge.update_embedding(
                             target_landmark.tangent_basis.T @ (new_landmark.position - target_landmark.position))
 
-            return new_landmark
+            return landmark_idx
 
     def plot_training_curves(self, save_path=None):
         """Plot training error curves."""
@@ -328,7 +325,7 @@ class ManifoldTraversal:
 
                         if corr < best_corr:
                             best_corr = corr
-                            next_idx = self.network.landmarks.index(edge.target)
+                            next_idx = edge.target_idx
 
                 if calc_mults:
                     mults += self.intrinsic_dim * deg_1
@@ -353,8 +350,9 @@ class ManifoldTraversal:
 
                     # Check only explicitly stored zero-order neighbors
                     for edge in zero_order_edges:
-                        target_idx = self.network.landmarks.index(edge.target)
-                        target_phi = np.sum((edge.target.position - x) ** 2)
+                        target_idx = edge.target_idx
+                        target = self.network.landmarks[target_idx]
+                        target_phi = np.sum((target.position - x) ** 2)
                         if target_phi < best_phi:
                             best_phi = target_phi
                             best_idx = target_idx
@@ -380,8 +378,9 @@ class ManifoldTraversal:
 
                 # Check only explicitly stored zero-order neighbors
                 for edge in zero_order_edges:
-                    target_idx = self.network.landmarks.index(edge.target)
-                    target_phi = np.sum((edge.target.position - x) ** 2)
+                    target_idx = edge.target_idx
+                    target = self.network.landmarks[target_idx]
+                    target_phi = np.sum((target.position - x) ** 2)
                     if target_phi < best_phi:
                         best_phi = target_phi
                         best_idx = target_idx
@@ -470,7 +469,7 @@ class ManifoldTraversal:
 
                     if corr < best_corr:
                         best_corr = corr
-                        next_idx = self.network.landmarks.index(edge.target)
+                        next_idx = edge.target_idx
 
             if calc_mults:
                 mults += self.intrinsic_dim * deg_1
@@ -522,10 +521,10 @@ class ManifoldTraversal:
             neighbor_vertices = set()
             # add zero-order neighbours
             for edge in current_landmark.zero_order_edges:
-                neighbor_vertices.add(edge.target)
+                neighbor_vertices.add(edge.target_idx)
             # add first-order neighbours
             for edge in current_landmark.first_order_edges.values():
-                neighbor_vertices.add(edge.target)
+                neighbor_vertices.add(edge.target_idx)
 
             # ensure deterministic ordering while iterating
             neighbor_vertices = list(neighbor_vertices)
@@ -534,12 +533,13 @@ class ManifoldTraversal:
             if calc_mults:
                 mults += self.ambient_dim * deg_0
 
-            for nbr in neighbor_vertices:
+            for nbr_idx in neighbor_vertices:
+                nbr = self.network.landmarks[nbr_idx]
                 cur_nbr_phi = np.sum((nbr.position - x) ** 2)
 
                 if cur_nbr_phi < best_phi:
                     best_phi = cur_nbr_phi
-                    best_idx = self.network.landmarks.index(nbr)
+                    best_idx = nbr_idx
             next_idx = best_idx
 
             if next_idx == current_idx:
@@ -660,7 +660,7 @@ class ManifoldTraversal:
                     corr = np.dot(edge.embedding, grad_phi)
                     if corr < best_corr:
                         best_corr = corr
-                        next_idx = self.network.landmarks.index(edge.target)
+                        next_idx = edge.target_idx
 
             # compute objective at speculated next vertex
             next_phi = np.sum((self.network.landmarks[next_idx].position - x) ** 2)
@@ -671,7 +671,7 @@ class ManifoldTraversal:
                 best_idx = current_idx
 
                 for edge in current_landmark.zero_order_edges:
-                    target_idx = self.network.landmarks.index(edge.target)
+                    target_idx = edge.target_idx
                     target_phi = np.sum((self.network.landmarks[target_idx].position - x) ** 2)
                     if target_phi < best_phi:
                         best_phi = target_phi
@@ -744,13 +744,13 @@ class ManifoldTraversal:
 
         # update edge embeddings after tangent space is updated
         for edge in landmark.first_order_edges.values():
-            target_landmark = edge.target
+            target_landmark = self.network.landmarks[edge.target_idx]
             # embedding from landmark to target using tangent basis
             edge.update_embedding(landmark.tangent_basis.T @ (target_landmark.position - landmark.position))
 
             # update reverse edge embedding
-            if target_landmark != landmark:  # don't update self-edge twice
-                reverse_edge = target_landmark.get_first_order_edge_to(landmark)
+            if edge.target_idx != landmark_idx:  # don't update self-edge twice
+                reverse_edge = target_landmark.get_first_order_edge_to(landmark_idx)
                 if reverse_edge is not None:
                     reverse_embedding = target_landmark.tangent_basis.T @ (landmark.position - target_landmark.position)
                     reverse_edge.update_embedding(reverse_embedding)

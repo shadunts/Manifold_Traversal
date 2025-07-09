@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib.lines import Line2D
 
+np.random.seed(42)
+
 from models.manifold_traversal import ManifoldTraversal
 
 mpl.rcParams.update({
