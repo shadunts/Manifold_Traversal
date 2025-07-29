@@ -4,7 +4,7 @@ import time
 from scipy.linalg import svd
 import matplotlib.pyplot as plt
 
-from utils.tisvd import TISVD_gw
+from utils.tisvd import TISVD
 
 from models.traversal_network import TraversalNetwork
 from models.training_results import TrainingResults
@@ -734,10 +734,10 @@ class ManifoldTraversal:
                              (1.0 / landmark.point_count) * x)
 
         # update tangent basis using TISVD
-        U_new, S_new_diag = TISVD_gw(x - landmark.position, landmark.tangent_basis,
-                                     landmark.singular_values,
-                                     landmark_idx,
-                                     self.intrinsic_dim)
+        U_new, S_new_diag = TISVD(x - landmark.position, landmark.tangent_basis,
+                                  landmark.singular_values,
+                                  landmark_idx,
+                                  self.intrinsic_dim)
 
         landmark.tangent_basis = U_new.copy()
         landmark.singular_values = S_new_diag.copy()

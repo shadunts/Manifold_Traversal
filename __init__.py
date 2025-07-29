@@ -1,5 +1,5 @@
 from .models import ManifoldTraversal, Landmark, TraversalNetwork, TrainingResults
-from .utils import TISVD_gw
+from .utils import TISVD
 
 __version__ = "1.0.0"
-__all__ = ['ManifoldTraversal', 'Landmark', 'TraversalNetwork', 'TrainingResults', 'TISVD_gw'] 
+__all__ = ['ManifoldTraversal', 'Landmark', 'TraversalNetwork', 'TrainingResults', 'TISVD']
