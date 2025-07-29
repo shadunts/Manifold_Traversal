@@ -53,6 +53,7 @@ class GWAblationStudy:
         self.network_names = []
         self.network_results = []
         self.network_stats = []
+        self.analysis_results = []
 
     def load_data(self):
         """Load training and test data."""
