@@ -17,7 +17,8 @@ class ManifoldTraversal:
 
     def __init__(self, intrinsic_dim, ambient_dim, sigma,
                  R_denoising=0.4, R_1st_order_nbhd=0.8, R_is_const=True,
-                 d_parallel=0.01414, prod_coeff=1.2, exp_coeff=0.5):
+                 d_parallel=0.01414, prod_coeff=1.2, exp_coeff=0.5,
+                 R_funnel=0.0):
         """
         Initialize manifold traversal with hyperparameters.
 
@@ -42,6 +43,8 @@ class ManifoldTraversal:
         self.d_parallel = d_parallel
         self.prod_coeff = prod_coeff
         self.exp_coeff = exp_coeff
+        # funnel radius for propagating zero-order edges to nearby first-order neighbors
+        self.R_funnel = R_funnel
 
         # init network and results
         self.network = TraversalNetwork()
@@ -143,8 +146,8 @@ class ManifoldTraversal:
             R_d_sq_best = self._compute_denoising_radius_sq(best_landmark_idx)
 
             if best_phi <= R_d_sq_best:
-                # add the zero-order edge first then update the landmark which increments the point count
-                self.network.add_zero_order_edge(landmark_idx, best_landmark_idx)
+                # add zero-order edge(s) using funnel logic, then update the chosen landmark
+                self._add_zero_order_with_funnel(landmark_idx, best_landmark_idx)
 
                 self._update_landmark(x, best_landmark_idx)
                 x_denoised = self._denoise_local(x, best_landmark_idx)
@@ -703,6 +706,46 @@ class ManifoldTraversal:
                 best_idx = i
 
         return best_idx, best_phi
+
+    def _add_zero_order_with_funnel(self, from_idx: int, to_idx: int, weight: float = 1.0):
+        """
+        Add a zero-order edge from from_idx to to_idx. If R_funnel > 0, also add
+        zero-order edges from first-order neighbors that are within distance R_funnel.
+
+        This performs a localized BFS over first-order neighbors, restricted to
+        landmarks whose Euclidean distance to the source is <= R_funnel.
+        """
+        # always add the direct edge
+        self.network.add_zero_order_edge(from_idx, to_idx, weight)
+
+        if self.R_funnel is None or self.R_funnel <= 0.0:
+            return
+
+        landmarks = self.network.landmarks
+        source = landmarks[from_idx]
+        R_sq = float(self.R_funnel) ** 2
+
+        # BFS over first-order neighbors within the funnel radius
+        visited = set([from_idx])
+        queue = [from_idx]
+
+        while queue:
+            cur_idx = queue.pop(0)
+            cur_landmark = landmarks[cur_idx]
+
+            # iterate over first-order neighbors of current node
+            for nbr_idx in cur_landmark.first_order_edges.keys():
+                if nbr_idx in visited:
+                    continue
+
+                nbr = landmarks[nbr_idx]
+                # check distance to source
+                dist_sq = np.sum((nbr.position - source.position) ** 2)
+                if dist_sq <= R_sq:
+                    # add zero-order edge from this neighbor to destination
+                    self.network.add_zero_order_edge(nbr_idx, to_idx, weight)
+                    visited.add(nbr_idx)
+                    queue.append(nbr_idx)
 
     def _compute_denoising_radius_sq(self, landmark_idx):
         """Compute denoising radius using direct access."""
