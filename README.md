@@ -38,14 +38,14 @@
 
 ### Signal Denoising
 <p align="center">
-  <img src="./figures/denoised_signal.png" width="50%">
+  <img src="./figures/denoised_signal.png" width="70%">
 </p>
 
 > **Gravitational wave signal reconstruction** showing noisy input vs. denoised output.
 
 ### Performance Analysis
 <p align="center">
-  <img src="./figures/complexity_vs_accuracy.png" width="50%">
+  <img src="./figures/complexity_vs_accuracy.png" width="70%">
 </p>
 
 > **Computational efficiency gains** - our method achieves better accuracy with lower computational cost compared to nearest neighbor baselines.
